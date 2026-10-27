@@ -1,0 +1,618 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Devin Teske <dteske@FreeBSD.org>
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd October 26, 2026
+.Dt GIT-OCTO 1
+.Os
+.Sh NAME
+.Nm "git octo"
+.Nd manage GitHub pull requests from git commits
+.Sh SYNOPSIS
+.Nm
+.Fl h
+.Nm
+.Op Fl hvy
+.Cm create
+.Op Fl dhl
+.Op Fl p Ar parent
+.Op Fl r Ar reviewer1 Ns Op Cm \&, Ns Ar reviewer2 ...
+.Op Fl s Ar subscriber1 Ns Op Cm \&, Ns Ar subscriber2 ...
+.Op Fl t Ar tag1 Ns Op Cm \&, Ns Ar tag2 ...
+.Ar commit-ref Op Ar commit-ref ...
+.Nm
+.Op Fl hvy
+.Cm diff Oo Fl h Oc Ar commit-ref Op Ar commit-ref ...
+.Nm
+.Op Fl hvy
+.Cm list Oo Fl h Oc Ar commit-ref Op Ar commit-ref ...
+.Nm
+.Op Fl hvy
+.Cm patch
+.Op Fl bcrs
+.Ar pull Op Ar pull ...
+.Nm
+.Op Fl hvy
+.Cm stage
+.Op Fl h
+.Op Fl b Ar branch
+.Ar commit-ref Op Ar commit-ref ...
+.Nm
+.Op Fl hvy
+.Cm update
+.Op Fl hl
+.Op Fl m Ar message
+.Ar commit-ref Op Ar commit-ref ...
+.Sh DESCRIPTION
+The
+.Nm
+utility creates and manages
+GitHub pull requests from git commits.
+It follows the
+.Xr git-arc 1
+workflow:
+one commit is one review, a commit range is handled oldest first,
+and
+.Cm stage
+lands that series on the local
+.Fx
+tree.
+.Pp
+.Nm
+talks to the GitHub REST API with
+.Xr openssl 1
+and downloads raw patches with
+.Xr fetch 1 .
+It does not require
+.Sy arc ,
+.Sy jq ,
+or the
+.Sy gh
+client.
+.Xr git 1
+is required.
+.Pp
+Pull requests are opened on
+.Va octo.fork ,
+not on the official GitHub repository.
+Each commit is pushed as
+.Pa git-octo/ Ns Ar slug ,
+derived from the commit subject, and that branch is the pull
+request head.
+The bottom of a series uses
+.Va octo.base
+.Pq normally Pa main
+on the fork as its base.
+A later commit uses the previous commit's branch as its base, so
+the pull request shows that commit alone.
+.Fl p
+sets the base of the first commit to the head branch of an existing
+pull request.
+GitHub is the review.
+Nothing is merged there.
+Committers do not have write access to the official GitHub
+repository, and
+.Cm stage
+is what lands the change, on the local tree that pushes with an
+SSH key.
+.Pp
+The pull request title is the commit subject and the body is the
+commit message.
+The title is the stable link until
+.Cm stage
+records a
+.Dq GitHub PR
+trailer, so a subject must stay unchanged for
+.Cm update
+to find the same pull request, and it must be unique among open
+pull requests on the fork.
+The landed commit records the review with a trailer, a tab between
+the label and the URL:
+.Bd -literal -offset indent
+GitHub PR:	https://github.com/FrauBSD/freebsd-src/pull/N
+.Ed
+.Pp
+The first parameter must be a verb.
+Most verbs accept one or more git commit references: commit hashes,
+branch names, commit ranges, and so on.
+A branch name refers to the single commit at its tip; use a commit
+range to operate on multiple commits.
+See
+.Xr git-rev-parse 1 .
+The available verbs are:
+.Bl -tag -width "create"
+.It Cm create
+Create a pull request for each specified commit.
+The commit is pushed to the fork and opened as a pull request
+there.
+The base is
+.Va octo.base ,
+or the head branch of
+.Fl p ,
+or the branch pushed for the previous commit in this invocation.
+Accepts options:
+.Bl -tag -width "-s subscriber"
+.It Fl d
+Create the pull request as a draft.
+.It Fl h
+Print the usage statement and exit.
+.It Fl l
+List the commits and wait for one confirmation before creating them.
+.It Fl p Ar parent
+Base the first pull request on the head branch of
+.Ar parent .
+.Ar parent
+is a pull request number, a
+.Pa https://github.com/.../pull/N
+URL, or a commit that already has a pull request.
+Later commits in this invocation are based on the branch just
+pushed.
+.It Fl r Ar reviewer
+GitHub users to request review from, separated by commas.
+A leading
+.Ql @
+is optional.
+A name that is the text of an
+.Va octo.reviewer.login
+entry is sent as that GitHub login.
+A name with a slash, or a leading
+.Ql # ,
+is a team of the fork's owner, when that owner is an organization.
+.It Fl s Ar subscriber
+GitHub users to mention in a comment on the new pull request,
+separated by commas.
+A name that is the text of an
+.Va octo.reviewer.login
+entry is sent as that GitHub login.
+.It Fl t Ar tag
+Labels to add, separated by commas.
+Unknown labels are reported and do not roll back the pull request.
+.El
+.It Cm diff
+Show the difference between each commit and its pull request head,
+which is what
+.Cm update
+would push.
+An empty diff means the commit and the pull request are in sync.
+.It Cm list
+Print the pull request associated with each commit.
+.It Cm patch
+Apply one or more pull requests to the current checkout.
+A pull request may be given as a number, as
+.Ql # Ns Ar number ,
+or as a GitHub pull request URL.
+The following options are accepted:
+.Bl -tag -width "-b"
+.It Fl b
+Check out a new branch before applying.
+.It Fl c
+Commit each applied pull request.
+The author and message come from the pull request head commit.
+Approvals are recorded as
+.Dq Reviewed by:
+lines when they can be determined.
+.It Fl r
+Download the head commit's raw diff with
+.Xr fetch 1
+and apply it with
+.Xr git-apply 1 .
+.It Fl s
+Apply the parent first.
+The parent is the open pull request whose head is this pull
+request's base branch.
+Give the top of a stack.
+.El
+.It Cm stage
+Check out
+.Va octo.base
+on the local tree
+.Pq or a new branch named with Fl b ,
+cherry-pick the commits onto it, and append a
+.Dq GitHub PR
+trailer when a pull request is found.
+.Dq Reviewed by
+is appended only when someone approved.
+The pull request is left open.
+The message is opened in an editor.
+Commits do not need a pull request.
+.It Cm update
+Push the named commits onto their pull request branches with
+.Fl -force-with-lease
+and, unless
+.Fl m
+is empty, add a comment.
+With
+.Fl m ,
+that text is the comment.
+Without
+.Fl m ,
+an editor is opened for each pull request.
+.Fl l
+confirms the commit list once instead of prompting per commit.
+.El
+.Pp
+Global options precede the verb:
+.Bl -tag -width "-y"
+.It Fl h
+Print the usage statement and exit.
+.It Fl v
+Print GitHub API requests.
+The token is not printed.
+.It Fl y
+Assume a yes answer to prompts.
+.El
+.Sh CONFIGURATION
+These are manipulated by
+.Xr git-config 1 :
+.Bl -tag -width "octo.reviewer.login"
+.It Va octo.assume-yes
+Assume yes to prompts.
+Equivalent to
+.Fl y .
+Defaults to false.
+.It Va octo.base
+Branch on the fork used as the base of a pull request that has
+no parent, and the local branch
+.Cm stage
+checks out.
+Defaults to
+.Pa main .
+.It Va octo.browse
+After
+.Cm create ,
+run
+.Va octo.browser
+or
+.Ev BROWSER
+on the new pull request URL.
+The URL is always printed.
+Defaults to false.
+.It Va octo.browser
+Command used when
+.Va octo.browse
+is true.
+.It Va octo.fork
+.Pa owner/repo
+where review branches and pull requests live.
+If unset,
+.Nm
+uses a
+.Pa github.com
+remote whose repository name matches
+.Va octo.upstream
+and whose owner does not.
+Example:
+.Pa FrauBSD/freebsd-src .
+.It Va octo.list
+Always use list mode
+.Pq Fl l
+with
+.Cm create
+and
+.Cm update .
+Defaults to false.
+.It Va octo.pushurl
+Git remote name or URL used to push the fork.
+The default is a matching remote, or
+.Pa git@github.com:owner/repo.git .
+.It Va octo.reviewer.login
+Text to write in
+.Dq Reviewed by:
+for the GitHub login that replaces
+.Pa login .
+Without a mapping, the login itself is used.
+.Fl r
+and
+.Fl s
+accept that text and send
+.Pa login
+to GitHub.
+If more than one login uses the same text, that name is rejected
+and the GitHub login must be given.
+.It Va octo.token
+GitHub token used when the environment does not provide one.
+A token in the environment is preferred.
+.It Va octo.upstream
+.Pa owner/repo
+of the official GitHub repository.
+Used to tell that remote apart from the fork.
+Pull requests are not opened there.
+Defaults to
+.Pa freebsd/freebsd-src .
+.It Va octo.verbose
+Equivalent to
+.Fl v .
+Defaults to false.
+.El
+.Pp
+A token is required for
+.Cm create
+and
+.Cm update .
+Read operations use a token when one is set and otherwise use GitHub's
+unauthenticated rate limit.
+The first of these that is set wins:
+.Bl -enum -compact
+.It
+.Ev OCTO_TOKEN
+.It
+.Ev GH_TOKEN
+.It
+.Ev GITHUB_TOKEN
+.It
+.Va octo.token
+.It
+.Sy gh auth token ,
+when
+.Sy gh
+is installed
+.It
+the password for
+.Pa api.github.com
+in
+.Pa ~/.netrc
+.Pq or Ev NETRC
+.El
+On a classic personal access token for a public fork, check
+.Pa public_repo .
+That scope covers opening the pull request, requesting reviewers,
+reading reviews, comments, labels, and searching the fork by title.
+Leave the parent
+.Pa repo
+box unchecked.
+Check
+.Pa repo
+only when the fork is private.
+That box grants access to private repositories.
+Push access to the fork is separate and uses the remote's SSH or HTTPS
+credentials.
+The token needs no scope for that push.
+.Pp
+A fine-grained personal access token is limited to the fork.
+On that repository, set
+.Sy Pull requests
+and
+.Sy Issues
+to read and write, and
+.Sy Contents
+to read.
+.Sy Metadata
+read is included with those.
+Pull requests covers
+.Cm create
+and review requests.
+Issues covers comments and labels.
+Contents covers reading the head commit.
+.Sh EXAMPLES
+Create a classic personal access token.
+The form is
+.Lk https://github.com/settings/tokens/new .
+Sign in, name the token, and check
+.Pa public_repo .
+Check
+.Pa repo
+instead when the fork is private.
+Generate the token.
+GitHub shows the value once.
+That value is
+.Ev TOKEN
+below.
+Point
+.Nm
+at a fork, store it, and create a pull request from
+.Dv HEAD :
+.Bd -literal -offset indent
+$ git remote add github git@github.com:FrauBSD/freebsd-src.git
+$ git config --global octo.fork FrauBSD/freebsd-src
+$ git config --global octo.token TOKEN
+$ git commit -m "kern: Rewrite in Rust"
+$ git octo create HEAD
+.Ed
+.Pp
+Amend that commit and update the pull request:
+.Bd -literal -offset indent
+$ git commit --amend
+$ git octo update HEAD
+.Ed
+.Pp
+Land it on the local tree and push with the SSH remote.
+The GitHub pull request stays open as the review:
+.Bd -literal -offset indent
+$ git octo stage HEAD
+$ git push freebsd HEAD:main
+.Ed
+.Pp
+Request a reviewer while creating:
+.Bd -literal -offset indent
+$ git octo create -r markj HEAD
+.Ed
+.Pp
+Create one pull request per commit in a range.
+The first commit in the range is excluded, as with
+.Xr git-rev-list 1 .
+Each later pull request is based on the branch pushed for the
+commit before it:
+.Bd -literal -offset indent
+$ git octo create HEAD~3..HEAD
+.Ed
+.Pp
+Base one commit on an existing pull request:
+.Bd -literal -offset indent
+$ git octo create -p 12 HEAD
+.Ed
+.Pp
+Show what an update of
+.Dv HEAD
+would change:
+.Bd -literal -offset indent
+$ git octo diff HEAD
+.Ed
+.Pp
+Apply pull request 12345 and commit it:
+.Bd -literal -offset indent
+$ git octo patch -c 12345
+.Ed
+.Pp
+List pull requests for a branch:
+.Bd -literal -offset indent
+$ git octo list main..feature
+.Ed
+.Sh LIMITATIONS
+.Nm
+uses the
+.Xr git-arc 1
+verbs.
+The review workflow differs as follows.
+.Bl -tag -width "Reviewers"
+.It Reviews
+Pull requests are opened on
+.Va octo.fork .
+They are not Differential Revisions, and they are not opened on
+the official GitHub repository.
+Phabricator mail rules do not see them.
+Someone is told about a review when named with
+.Fl r
+or
+.Fl s ,
+or when they already watch the fork.
+.Cm stage
+prepares the local tree.
+The push into
+.Fx
+is still the SSH remote.
+.It Numbers
+Phabricator's
+.Ql D1234
+is one id for the whole project, and
+.Xr git-arc 1
+accepts that form.
+.Nm
+does not accept it.
+A pull request number belongs to one repository.
+In a comment or pull request body on the fork,
+.Ql #12
+and
+.Ql GH-12
+link to pull request 12 there.
+A review in another repository is written
+.Ql owner/repo#12 .
+.It Stacks
+.Fl p
+sets the new pull request's base to the parent review's branch
+on the fork.
+That branch, and
+.Va octo.base ,
+must already exist on the fork.
+.Cm patch Fl s
+follows that base branch.
+Each review also keeps a
+.Pa git-octo/ Ns Ar slug
+branch.
+.Cm create
+stops if that branch name is already present.
+.Cm update
+force-pushes it.
+Without the branch,
+.Cm update
+and
+.Cm diff
+have no head to fetch.
+.It Trailers
+.Cm stage
+writes
+.Dq GitHub PR ,
+a tab, and the pull request URL.
+.Dq Reviewed by
+is written only for people who approved.
+By default the name is the GitHub login.
+.Va octo.reviewer.login
+can replace that login with other text.
+In the setting below,
+.Ql devinteske
+is the GitHub handle, and
+.Ql dteske
+is the FreeBSD handle written into the trailer:
+.Bd -literal -offset indent
+$ git config octo.reviewer.devinteske dteske
+.Ed
+.Pp
+An approval by that account is then recorded as
+.Bd -literal -offset indent
+Reviewed by:	dteske
+.Ed
+.Pp
+Without that setting the same approval is recorded as
+.Bd -literal -offset indent
+Reviewed by:	devinteske
+.Ed
+.Pp
+If nobody approved, that trailer is omitted.
+.It Reviewers
+.Fl r
+names GitHub users, or teams when the fork owner is an
+organization.
+.Fl s
+posts a comment of the form
+.Ql cc @user .
+GitHub does not keep a separate subscriber list for that user.
+.Fl t
+adds labels that already exist on the fork.
+.It Update
+.Cm update
+replaces the branch tip and adds a comment.
+It leaves the pull request title and body as they were at
+.Cm create .
+Until a
+.Dq GitHub PR
+trailer is present, a commit is found by its subject, so a new
+subject is a different review.
+.It Diff
+.Cm diff
+compares the tree of the pull request head with the tree of the
+local commit.
+.Nm git arc
+applies the review's raw diff to the commit's parent and compares
+that with the commit, so a rebase can still match.
+After a rebase,
+.Nm
+also shows upstream changes that are not part of the review.
+.El
+.Sh SEE ALSO
+.Xr fetch 1 ,
+.Xr git 1 ,
+.Xr git-arc 1 ,
+.Xr openssl 1 ,
+.Xr build 7 ,
+.Xr development 7
+.Sh HISTORY
+The
+.Nm
+utility appeared in the src tools collection in
+.Fx 16.0 .
+.Sh AUTHORS
+The
+.Nm
+utility and this manual page were written by
+.An Devin Teske Aq Mt dteske@FreeBSD.org .
